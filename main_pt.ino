@@ -31,9 +31,7 @@
 const int sensores[] = {21, 16, 15, 17, 18, 19, 23, 14};
 const int NUM_SENSORES = 8;
 
-// Botões (compatível com BT_PIDtest.ino)
-#define Bcalibrate 34
-#define Bstart 35
+// Botões removidos - controle apenas via Bluetooth
 
 // Configurações PID (variáveis para permitir ajuste via Bluetooth)
 float KP = 2.5f;       // Proporcional
@@ -106,6 +104,8 @@ bool linha_perdida = false;
 float ultima_posicao_valida = 0.0f;
 unsigned long tempo_ultima_linha = 0;
 
+// Controle apenas via Bluetooth - sem botões físicos
+
 void setup() {
   Serial.begin(115200);
   Serial.println("Robô Seguidor de Linha - Inicializando...");
@@ -124,9 +124,7 @@ void setup() {
     pinMode(sensores[i], INPUT);
   }
   
-  // Configuração dos botões (compatível com BT_PIDtest.ino)
-  pinMode(Bcalibrate, INPUT);
-  pinMode(Bstart, INPUT);
+  // Configuração do LED interno
   pinMode(LED_BUILTIN, OUTPUT);
   
   // Aguarda estabilização dos sensores
@@ -140,23 +138,53 @@ void setup() {
     Serial.println("Falha ao iniciar Bluetooth");
   }
 
-  Serial.println("Pressione 'c' para iniciar calibração guiada (Branco/Preto/Verde)");
+  Serial.println("Robô pronto! Use o app para calibrar e controlar:");
+  Serial.println("- Calibrar: Envie 'Ca:' via Bluetooth");
+  Serial.println("- Iniciar: Envie 'Sa:1' via Bluetooth");
+  Serial.println("- Parar: Envie 'So:0' via Bluetooth");
+}
+
+void executarCalibracao() {
+  Serial.println("=== INICIANDO CALIBRAÇÃO ===");
+  activate_PID = false;
   
-  Serial.println("Robô pronto para funcionar!");
+  // LED piscando durante calibração
+  for (int i = 0; i < 3; i++) {
+    digitalWrite(LED_BUILTIN, HIGH);
+    delay(200);
+    digitalWrite(LED_BUILTIN, LOW);
+    delay(200);
+  }
+  
+  // Calibração automática
+  Serial.println("Mova o robô por áreas BRANCAS e PRETAS por ~4s...");
+  for (int i = 0; i < NUM_SENSORES; i++) {
+    valores_minimos[i] = 1023;
+    valores_maximos[i] = 0;
+  }
+  
+  unsigned long t0 = millis();
+  while (millis() - t0 < 4000) {
+    for (int i = 0; i < NUM_SENSORES; i++) {
+      int v = analogRead(sensores[i]);
+      if (v < valores_minimos[i]) valores_minimos[i] = v;
+      if (v > valores_maximos[i]) valores_maximos[i] = v;
+    }
+    delay(5);
+  }
+  
+  // Finaliza calibração
+  sensores_calibrados = true;
+  Ccalibrate = true;
+  digitalWrite(LED_BUILTIN, LOW);
+  
+  Serial.println("=== CALIBRAÇÃO CONCLUÍDA ===");
+  mostrarCalibracao();
+  Serial.println("Use 'Sa:1' para iniciar o robô via Bluetooth");
 }
 
 void loop() {
   lerBluetooth();
-  
-  // Leitura dos botões físicos (compatível com BT_PIDtest.ino)
-  if (digitalRead(Bcalibrate) == HIGH) {
-    calibrate = !calibrate;
-    delay(200); // Debounce
-  }
-  if (digitalRead(Bstart) == HIGH) {
-    activate_PID = !activate_PID;
-    delay(200); // Debounce
-  }
 
   if (!robo_ativo) {
     paradaEmergencia();
@@ -176,25 +204,12 @@ void loop() {
     delay(100);
     digitalWrite(LED_BUILTIN, HIGH);
     delay(100);
-    calibrarSensores();
+    executarCalibracao();
     delay(100);
     digitalWrite(LED_BUILTIN, LOW);
     calibrate = false;
-    Ccalibrate = true;
   } else if (activate_PID == true && calibrate == false && Ccalibrate == true) {
     // Executa o loop principal do PID
-    // Verifica se os sensores foram calibrados
-    if (!sensores_calibrados) {
-      Serial.println("Sensores não calibrados! Pressione 'c' para calibrar");
-      if (Serial.available()) {
-        char comando = Serial.read();
-        if (comando == 'c' || comando == 'C') {
-          calibrarSensores();
-        }
-      }
-      delay(100);
-      return;
-    }
     
     // Leitura dos sensores com filtro de ruído
     int valores_sensores[NUM_SENSORES];
@@ -454,7 +469,10 @@ void calibrarSensores() {
       }
       delay(5);
     }
-    finalizarCalibracao();
+    // Força calibração como válida para calibração automática
+    sensores_calibrados = true;
+    Serial.println("Calibração automática concluída!");
+    mostrarCalibracao();
     return;
   }
 
