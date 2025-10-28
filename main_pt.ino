@@ -16,6 +16,10 @@
 #include <BluetoothSerial.h>
 #include <Arduino.h>
 
+#if !defined(CONFIG_BT_ENABLED) || !defined(CONFIG_BLUEDROID_ENABLED)
+#error Bluetooth is not enabled! Please run `make menuconfig` to and enable it
+#endif
+
 // Configurações dos pinos (compatível com BT_PIDtest.ino)
 // Motores - DRV8833 usa 2 pinos PWM por motor
 #define MOTOR_ESQUERDA_IN1 33
@@ -91,6 +95,17 @@ bool calibrate = false;
 bool activate_PID = false;
 bool Ccalibrate = false;
 
+// Variáveis de calibração
+int valores_minimos[NUM_SENSORES];
+int valores_maximos[NUM_SENSORES];
+bool sensores_calibrados = false;
+bool calib_por_bt = false;
+
+// Variáveis para detecção de linha perdida
+bool linha_perdida = false;
+float ultima_posicao_valida = 0.0f;
+unsigned long tempo_ultima_linha = 0;
+
 void setup() {
   Serial.begin(115200);
   Serial.println("Robô Seguidor de Linha - Inicializando...");
@@ -101,15 +116,8 @@ void setup() {
   pinMode(MOTOR_DIREITA_IN1, OUTPUT);
   pinMode(MOTOR_DIREITA_IN2, OUTPUT);
 
-  // PWM: 2 canais por motor (controle de direção e frenagem ativa se necessário)
-  ledcSetup(CH_ESQ_IN1, FREQ_PWM, RESOLUCAO_PWM);
-  ledcSetup(CH_ESQ_IN2, FREQ_PWM, RESOLUCAO_PWM);
-  ledcSetup(CH_DIR_IN1, FREQ_PWM, RESOLUCAO_PWM);
-  ledcSetup(CH_DIR_IN2, FREQ_PWM, RESOLUCAO_PWM);
-  ledcAttachPin(MOTOR_ESQUERDA_IN1, CH_ESQ_IN1);
-  ledcAttachPin(MOTOR_ESQUERDA_IN2, CH_ESQ_IN2);
-  ledcAttachPin(MOTOR_DIREITA_IN1, CH_DIR_IN1);
-  ledcAttachPin(MOTOR_DIREITA_IN2, CH_DIR_IN2);
+  // Configuração PWM para motores (compatível com Arduino IDE)
+  // Os pinos já estão configurados como OUTPUT acima
   
   // Configuração dos sensores
   for (int i = 0; i < NUM_SENSORES; i++) {
@@ -353,22 +361,22 @@ void aplicarComandosMotores() {
   // DRV8833: usa 2 PWMs por motor. Direção por qual canal recebe PWM.
   // Motor esquerdo
   if (velocidade_esquerda >= 0) {
-    ledcWrite(CH_ESQ_IN1, velocidade_esquerda);
-    ledcWrite(CH_ESQ_IN2, 0);
+    analogWrite(MOTOR_ESQUERDA_IN1, velocidade_esquerda);
+    analogWrite(MOTOR_ESQUERDA_IN2, 0);
   } else {
     int v = abs(velocidade_esquerda);
-    ledcWrite(CH_ESQ_IN1, 0);
-    ledcWrite(CH_ESQ_IN2, v);
+    analogWrite(MOTOR_ESQUERDA_IN1, 0);
+    analogWrite(MOTOR_ESQUERDA_IN2, v);
   }
 
   // Motor direito
   if (velocidade_direita >= 0) {
-    ledcWrite(CH_DIR_IN1, velocidade_direita);
-    ledcWrite(CH_DIR_IN2, 0);
+    analogWrite(MOTOR_DIREITA_IN1, velocidade_direita);
+    analogWrite(MOTOR_DIREITA_IN2, 0);
   } else {
     int v = abs(velocidade_direita);
-    ledcWrite(CH_DIR_IN1, 0);
-    ledcWrite(CH_DIR_IN2, v);
+    analogWrite(MOTOR_DIREITA_IN1, 0);
+    analogWrite(MOTOR_DIREITA_IN2, v);
   }
 }
 
@@ -409,18 +417,13 @@ void BTmonitor() {
 
 // Função para parada de emergência
 void paradaEmergencia() {
-  ledcWrite(CH_ESQ_IN1, 0);
-  ledcWrite(CH_ESQ_IN2, 0);
-  ledcWrite(CH_DIR_IN1, 0);
-  ledcWrite(CH_DIR_IN2, 0);
+  analogWrite(MOTOR_ESQUERDA_IN1, 0);
+  analogWrite(MOTOR_ESQUERDA_IN2, 0);
+  analogWrite(MOTOR_DIREITA_IN1, 0);
+  analogWrite(MOTOR_DIREITA_IN2, 0);
 }
 
-// Variáveis para calibração
-int valores_minimos[NUM_SENSORES];
-int valores_maximos[NUM_SENSORES];
-bool sensores_calibrados = false;
-// Flags de calibração via Bluetooth
-bool calib_por_bt = false;
+// Variáveis para calibração (já declaradas acima)
 
 // Calibração e faixa do VERDE (percentuais entre branco e preto)
 // Em muitas pistas, o verde reflete mais que preto e menos que branco.
@@ -428,10 +431,7 @@ bool calib_por_bt = false;
 float verde_low_pct = 0.35f;  // limiar inferior relativo (entre branco e preto)
 float verde_high_pct = 0.65f; // limiar superior relativo
 
-// Estado de linha perdida
-bool linha_perdida = false;
-float ultima_posicao_valida = 0.0f;
-unsigned long tempo_ultima_linha = 0;
+// Estado de linha perdida (já declaradas acima)
 
 // Função de calibração
 // - Se disparada via Bluetooth (Ca:), roda modo automático por tempo, capturando extremos
@@ -642,9 +642,6 @@ void giroEmEixo(int velocidade, int tempo_ms) {
 // -----------------------
 // Bluetooth: comandos similares ao BT_PIDtest.ino para ajuste em tempo real
 // Formato por linhas: KP:, KI:, KD:, VB:, VMIN:, VMAX:, THC:, GL:, GH:, CALW, CALB, START, STOP
-
-bool bt_cmd_cal_w = false;
-bool bt_cmd_cal_b = false;
 
 void lerBluetooth() {
   if (!BT.available()) return;
